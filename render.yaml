@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: wolt-monitor
+    runtime: docker
+    plan: starter
+    envVars:
+      - key: WOLT_MENU_URL
+        sync: false
+      - key: WOLT_EMAIL
+        sync: false
+      - key: APPS_SCRIPT_URL
+        sync: false
+      - key: UI_PASSWORD
+        sync: false
+      - key: GREEN_API_INSTANCE
+        sync: false
+      - key: GREEN_API_TOKEN
+        sync: false
+      - key: WHATSAPP_CHAT_ID
+        sync: false
+    disk:
+      name: wolt-data
+      mountPath: /app/data
+      sizeGB: 1

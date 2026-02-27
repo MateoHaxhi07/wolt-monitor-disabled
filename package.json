@@ -1,0 +1,16 @@
+{
+  "name": "wolt-disabled-monitor-cloud",
+  "version": "1.1.0",
+  "description": "Cloud-based Wolt disabled items monitor with Puppeteer",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "puppeteer": "^22.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

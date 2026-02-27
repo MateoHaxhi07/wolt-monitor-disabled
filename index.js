@@ -442,6 +442,9 @@ async function doScrape() {
         isLoggedIn = true;
         loginAlertSent = false;
 
+        // Dismiss any cookie banners that might have appeared
+        await dismissCookieBanner();
+
         // Scroll to load virtual list items
         await scrollToLoadAll();
 
@@ -500,10 +503,41 @@ async function navigateToMenu() {
     try {
         await page.goto(CONFIG.WOLT_MENU_URL, { waitUntil: 'networkidle2', timeout: 60000 });
         console.log('[Nav] Page loaded:', page.url());
+        await dismissCookieBanner();
         // Wait a bit for React to render
         await new Promise(r => setTimeout(r, 3000));
     } catch (err) {
         console.error('[Nav] Failed:', err.message);
+    }
+}
+
+// Auto-dismiss cookie consent banners
+async function dismissCookieBanner() {
+    try {
+        const dismissed = await page.evaluate(() => {
+            // Wolt's specific cookie accept button
+            const acceptBtn = document.querySelector('[data-test-id="consent-banner-accept-button"]');
+            if (acceptBtn) {
+                acceptBtn.click();
+                return 'wolt-accept';
+            }
+            // Fallback: any button that says "Allow" or "Accept"
+            const buttons = document.querySelectorAll('button');
+            for (const btn of buttons) {
+                const text = btn.textContent.trim().toLowerCase();
+                if (text === 'allow' || text === 'accept' || text === 'accept all') {
+                    btn.click();
+                    return 'generic-accept';
+                }
+            }
+            return false;
+        });
+        if (dismissed) {
+            await new Promise(r => setTimeout(r, 1000));
+            console.log(`[Nav] Cookie banner dismissed via: ${dismissed}`);
+        }
+    } catch (err) {
+        console.log('[Nav] No cookie banner found or already dismissed');
     }
 }
 
@@ -806,6 +840,10 @@ app.post('/auth/request-login', async (req, res) => {
         console.log('[Auth] Requesting login email...');
         await page.goto('https://merchant.wolt.com', { waitUntil: 'networkidle2', timeout: 30000 });
 
+        // Must dismiss cookie banner first, otherwise it may block the form
+        await dismissCookieBanner();
+        await new Promise(r => setTimeout(r, 1500));
+
         // Try to find and fill email input
         await page.waitForSelector('input[type="email"], input[name="email"]', { timeout: 10000 });
         await page.type('input[type="email"], input[name="email"]', CONFIG.WOLT_EMAIL, { delay: 50 });
@@ -843,6 +881,7 @@ app.post('/auth/magic-link', async (req, res) => {
     try {
         console.log('[Auth] Navigating to magic link...');
         await page.goto(magicLink, { waitUntil: 'networkidle2', timeout: 60000 });
+        await dismissCookieBanner();
         await new Promise(r => setTimeout(r, 3000));
 
         // Save cookies immediately
@@ -852,6 +891,7 @@ app.post('/auth/magic-link', async (req, res) => {
         // Navigate to menu page
         console.log('[Auth] Magic link processed, navigating to menu...');
         await page.goto(CONFIG.WOLT_MENU_URL, { waitUntil: 'networkidle2', timeout: 60000 });
+        await dismissCookieBanner();
         await new Promise(r => setTimeout(r, 3000));
 
         // Check if logged in

@@ -573,6 +573,11 @@ app.get('/', (req, res) => {
     <div class="info">Last sent to sheet: <span>${lastSendTime || 'Never'}</span></div>
     <div class="info">Total scrapes: <span>${totalScrapes}</span></div>
     <div class="info">Disabled: <span>${itemCount} items + ${optionCount} options</span></div>
+    <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
+      <a href="/screenshot" style="background:#1e3a5f; color:#00aaff; padding:8px 14px; border-radius:8px; text-decoration:none; font-size:13px;">📸 Live Preview</a>
+      <a href="/screenshot/full" style="background:#1e3a5f; color:#00aaff; padding:8px 14px; border-radius:8px; text-decoration:none; font-size:13px;">📜 Full Page</a>
+      <a href="/api/status" style="background:#1e3a5f; color:#00aaff; padding:8px 14px; border-radius:8px; text-decoration:none; font-size:13px;">📊 JSON Status</a>
+    </div>
   </div>
 
   ${lastItems.length > 0 ? `
@@ -884,6 +889,70 @@ app.get('/api/status', (req, res) => {
         items: lastItems,
         uptime: process.uptime(),
     });
+});
+
+// Live screenshot of what the browser sees
+app.get('/screenshot', async (req, res) => {
+    try {
+        if (!page) return res.status(500).send('Browser not ready');
+        const screenshot = await page.screenshot({ fullPage: false, type: 'png' });
+        const pageUrl = page.url();
+        const pageTitle = await page.title().catch(() => '');
+
+        res.send(`<!DOCTYPE html><html><head><title>Live Preview</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          body { background:#0f0f1a; color:#e0e0e0; font-family:sans-serif; padding:20px; margin:0; }
+          .bar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
+          .url { background:#1a1a2e; padding:8px 14px; border-radius:8px; font-family:monospace; font-size:13px; color:#00aaff; word-break:break-all; flex:1; min-width:200px; }
+          img { max-width:100%; border:2px solid #333; border-radius:8px; }
+          a { color:#00aaff; text-decoration:none; }
+          button, .btn { background:#333; color:#e0e0e0; border:none; padding:8px 16px; border-radius:8px; cursor:pointer; font-size:13px; text-decoration:none; display:inline-block; }
+          button:hover, .btn:hover { background:#444; }
+          .refresh { background:#00ff88; color:#0f0f1a; }
+          .info { color:#888; font-size:13px; margin-bottom:8px; }
+        </style></head><body>
+          <div class="bar">
+            <a href="/" class="btn">← Dashboard</a>
+            <a href="/screenshot" class="btn refresh">🔄 Refresh Screenshot</a>
+            <a href="/screenshot/full" class="btn">📜 Full Page</a>
+          </div>
+          <div class="info">📍 Current URL:</div>
+          <div class="url">${pageUrl}</div>
+          <div class="info" style="margin-top:12px;">📸 Page title: <strong>${pageTitle}</strong> | Captured: ${new Date().toLocaleTimeString('en-GB')}</div>
+          <img src="/screenshot/raw" alt="Browser screenshot" style="margin-top:12px;">
+          <div class="info" style="margin-top:16px;">Auto-refreshes every 15s</div>
+          <script>setTimeout(() => location.reload(), 15000);</script>
+        </body></html>`);
+    } catch (err) {
+        res.status(500).send(`Error: ${err.message}`);
+    }
+});
+
+// Raw screenshot image (viewport only)
+app.get('/screenshot/raw', async (req, res) => {
+    try {
+        if (!page) return res.status(500).send('Browser not ready');
+        const screenshot = await page.screenshot({ fullPage: false, type: 'png' });
+        res.set('Content-Type', 'image/png');
+        res.set('Cache-Control', 'no-store');
+        res.send(screenshot);
+    } catch (err) {
+        res.status(500).send(`Error: ${err.message}`);
+    }
+});
+
+// Raw screenshot image (full page)
+app.get('/screenshot/full', async (req, res) => {
+    try {
+        if (!page) return res.status(500).send('Browser not ready');
+        const screenshot = await page.screenshot({ fullPage: true, type: 'png' });
+        res.set('Content-Type', 'image/png');
+        res.set('Cache-Control', 'no-store');
+        res.send(screenshot);
+    } catch (err) {
+        res.status(500).send(`Error: ${err.message}`);
+    }
 });
 
 // Force refresh page

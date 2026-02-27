@@ -1,5 +1,5 @@
 const express = require('express');
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
@@ -197,10 +197,10 @@ function sendToAppsScript(items) {
 // BROWSER MANAGEMENT
 // ============================================================
 async function launchBrowser() {
-    console.log('[Browser] Launching...');
+    console.log('[Browser] Launching (low-memory mode)...');
     browser = await puppeteer.launch({
         headless: 'new',
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -213,7 +213,24 @@ async function launchBrowser() {
             '--disable-translate',
             '--no-first-run',
             '--single-process',
-            '--js-flags=--max-old-space-size=256',
+            '--no-zygote',
+            '--disable-breakpad',
+            '--disable-component-update',
+            '--disable-domain-reliability',
+            '--disable-features=AudioServiceOutOfProcess,IsolateOrigins,site-per-process',
+            '--disable-hang-monitor',
+            '--disable-ipc-flooding-protection',
+            '--disable-popup-blocking',
+            '--disable-prompt-on-repost',
+            '--disable-renderer-backgrounding',
+            '--disable-site-isolation-trials',
+            '--disable-speech-api',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--metrics-recording-only',
+            '--mute-audio',
+            '--no-default-browser-check',
+            '--js-flags=--max-old-space-size=128',
         ],
     });
     console.log('[Browser] Launched successfully');
@@ -223,11 +240,11 @@ async function setupPage() {
     if (!browser) await launchBrowser();
     page = await browser.newPage();
 
-    // Minimize memory: block images, fonts, media
+    // Aggressive memory saving: block images, fonts, media, stylesheets
     await page.setRequestInterception(true);
     page.on('request', (req) => {
         const type = req.resourceType();
-        if (['image', 'font', 'media', 'stylesheet'].includes(type)) {
+        if (['image', 'font', 'media'].includes(type)) {
             req.abort();
         } else {
             req.continue();
@@ -370,7 +387,7 @@ async function scrollToLoadAll() {
         let lastHeight = 0;
         let sameCount = 0;
 
-        for (let i = 0; i < 50; i++) { // max 50 scroll steps
+        for (let i = 0; i < 25; i++) { // max 25 scroll steps
             if (scrollTarget === window) {
                 window.scrollBy(0, 800);
             } else {
@@ -445,8 +462,11 @@ async function doScrape() {
         // Dismiss any cookie banners that might have appeared
         await dismissCookieBanner();
 
-        // Scroll to load virtual list items
-        await scrollToLoadAll();
+        // Only do full scroll every 5th scrape (~100s) to save memory
+        // Other scrapes just check what's visible
+        if (totalScrapes % 5 === 0) {
+            await scrollToLoadAll();
+        }
 
         // Scrape
         const items = await scrapeDisabledItems();
@@ -465,6 +485,16 @@ async function doScrape() {
         // Save cookies periodically
         const cookies = await page.cookies();
         saveCookies(cookies);
+
+        // Clear browser cache every 50 scrapes to prevent memory growth
+        if (totalScrapes % 50 === 0) {
+            try {
+                const client = await page.target().createCDPSession();
+                await client.send('Network.clearBrowserCache');
+                await client.detach();
+                console.log('[Memory] Browser cache cleared');
+            } catch (e) { /* ignore */ }
+        }
 
     } catch (err) {
         scrapeErrors++;
@@ -606,6 +636,7 @@ app.get('/', (req, res) => {
     <div class="info">Last scrape: <span>${lastScrapeTime || 'Never'}</span></div>
     <div class="info">Last sent to sheet: <span>${lastSendTime || 'Never'}</span></div>
     <div class="info">Total scrapes: <span>${totalScrapes}</span></div>
+    <div class="info">Memory: <span>${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB RSS / ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB heap</span></div>
     <div class="info">Disabled: <span>${itemCount} items + ${optionCount} options</span></div>
     <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
       <a href="/screenshot" style="background:#1e3a5f; color:#00aaff; padding:8px 14px; border-radius:8px; text-decoration:none; font-size:13px;">📸 Live Preview</a>

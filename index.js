@@ -55,6 +55,39 @@ let loginAlertSent = false;
 let scrapeInterval = null;
 
 // ============================================================
+// CONTACTS MANAGEMENT (persistent, switchable from UI)
+// ============================================================
+const CONTACTS_PATH = path.join(path.dirname(CONFIG.COOKIE_PATH), 'contacts.json');
+
+// Default contacts - customize these
+const DEFAULT_CONTACTS = [
+    { id: 'mateo', name: 'Mateo', chatId: CONFIG.WHATSAPP_CHAT_ID || '', active: true },
+];
+
+function loadContacts() {
+    try {
+        if (fs.existsSync(CONTACTS_PATH)) {
+            return JSON.parse(fs.readFileSync(CONTACTS_PATH, 'utf-8'));
+        }
+    } catch (err) {
+        console.error('[Contacts] Error loading:', err.message);
+    }
+    // Initialize with defaults
+    saveContacts(DEFAULT_CONTACTS);
+    return DEFAULT_CONTACTS;
+}
+
+function saveContacts(contacts) {
+    const dir = path.dirname(CONTACTS_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(CONTACTS_PATH, JSON.stringify(contacts, null, 2));
+}
+
+function getActiveContacts() {
+    return loadContacts().filter(c => c.active && c.chatId);
+}
+
+// ============================================================
 // COOKIE MANAGEMENT
 // ============================================================
 function saveCookies(cookies) {
@@ -81,31 +114,39 @@ function loadCookies() {
 // WHATSAPP ALERT
 // ============================================================
 function sendWhatsAppAlert(message) {
-    if (!CONFIG.GREEN_API_INSTANCE || !CONFIG.GREEN_API_TOKEN || !CONFIG.WHATSAPP_CHAT_ID) {
+    if (!CONFIG.GREEN_API_INSTANCE || !CONFIG.GREEN_API_TOKEN) {
         console.log('[WhatsApp] Alert skipped (not configured):', message);
         return;
     }
 
-    const url = `https://api.green-api.com/waInstance${CONFIG.GREEN_API_INSTANCE}/sendMessage/${CONFIG.GREEN_API_TOKEN}`;
-    const payload = JSON.stringify({
-        chatId: CONFIG.WHATSAPP_CHAT_ID,
-        message: message,
-    });
+    const activeContacts = getActiveContacts();
+    if (activeContacts.length === 0) {
+        console.log('[WhatsApp] No active contacts, skipping alert');
+        return;
+    }
 
-    const urlObj = new URL(url);
-    const req = https.request({
-        hostname: urlObj.hostname,
-        path: urlObj.pathname,
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
-    }, (res) => {
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => console.log('[WhatsApp] Alert sent:', data));
+    activeContacts.forEach(contact => {
+        const url = `https://api.green-api.com/waInstance${CONFIG.GREEN_API_INSTANCE}/sendMessage/${CONFIG.GREEN_API_TOKEN}`;
+        const payload = JSON.stringify({
+            chatId: contact.chatId,
+            message: message,
+        });
+
+        const urlObj = new URL(url);
+        const req = https.request({
+            hostname: urlObj.hostname,
+            path: urlObj.pathname,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+        }, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => console.log(`[WhatsApp] Alert sent to ${contact.name}:`, data));
+        });
+        req.on('error', err => console.error(`[WhatsApp] Alert error (${contact.name}):`, err.message));
+        req.write(payload);
+        req.end();
     });
-    req.on('error', err => console.error('[WhatsApp] Alert error:', err.message));
-    req.write(payload);
-    req.end();
 }
 
 // ============================================================
@@ -546,6 +587,66 @@ app.get('/', (req, res) => {
   </div>` : ''}
 
   <div class="card">
+    <h2>📱 WhatsApp Contacts</h2>
+    <p style="color:#888; font-size:13px; margin-bottom:12px;">
+      Toggle who receives alerts. Green = active.
+    </p>
+    ${(() => {
+        const contacts = loadContacts();
+        return contacts.map((c, i) => `
+        <div style="display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid #2a2a3e;">
+          <div class="dot ${c.active ? 'green' : 'red'}" style="flex-shrink:0;"></div>
+          <div style="flex:1;">
+            <strong>${c.type === 'group' ? '👥' : '👤'} ${c.name}</strong>
+            <span style="color:#666; font-size:12px; margin-left:6px;">${c.chatId || 'no number'}</span>
+          </div>
+          <form method="POST" action="/contacts/toggle" style="margin:0;">
+            <input type="hidden" name="password" value="">
+            <input type="hidden" name="id" value="${c.id}">
+            <button type="submit" style="width:auto; padding:4px 12px; font-size:12px; background:${c.active ? '#333' : '#00ff88'}; color:${c.active ? '#e0e0e0' : '#0f0f1a'};">
+              ${c.active ? 'Disable' : 'Enable'}
+            </button>
+          </form>
+        </div>`).join('');
+    })()}
+    <details style="margin-top:14px;">
+      <summary style="color:#00aaff; cursor:pointer; font-size:13px;">➕ Add new contact or group</summary>
+      <form method="POST" action="/contacts/add" style="margin-top:10px;">
+        <input type="password" name="password" placeholder="UI Password" required>
+        <input type="text" name="name" placeholder="Name (e.g. Lona or Staff Group)" required>
+        <select name="type" style="width:100%;padding:12px;margin:6px 0;border-radius:8px;border:1px solid #333;background:#0f0f1a;color:#e0e0e0;font-size:14px;">
+          <option value="person">👤 Person (phone number)</option>
+          <option value="group">👥 Group chat</option>
+        </select>
+        <input type="text" name="chatId" placeholder="Phone number OR group ID (see below)" required>
+        <p style="color:#666; font-size:11px; margin:4px 0;">
+          Person: just the number like <b>355694022227</b><br>
+          Group: the full ID like <b>120363XXXXX@g.us</b>
+        </p>
+        <button type="submit" class="btn-secondary">Add Contact</button>
+      </form>
+      <form method="POST" action="/contacts/list-groups" style="margin-top:8px;">
+        <input type="password" name="password" placeholder="UI Password" required>
+        <button type="submit" class="btn-secondary" style="font-size:12px;">📋 Show my WhatsApp groups (find group IDs)</button>
+      </form>
+    </details>
+    <details style="margin-top:8px;">
+      <summary style="color:#ff6666; cursor:pointer; font-size:13px;">🗑️ Remove contact</summary>
+      <form method="POST" action="/contacts/remove" style="margin-top:10px;">
+        <input type="password" name="password" placeholder="UI Password" required>
+        <select name="id" style="width:100%;padding:12px;margin:6px 0;border-radius:8px;border:1px solid #333;background:#0f0f1a;color:#e0e0e0;font-size:14px;">
+          ${loadContacts().map(c => `<option value="${c.id}">${c.name} (${c.chatId})</option>`).join('')}
+        </select>
+        <button type="submit" style="background:#ff4444; color:white; width:100%; padding:12px; margin:6px 0; border-radius:8px; border:none; cursor:pointer;">Remove</button>
+      </form>
+    </details>
+    <form method="POST" action="/contacts/test" style="margin-top:14px;">
+      <input type="password" name="password" placeholder="UI Password" required style="display:inline-block;width:60%;margin-right:4px;">
+      <button type="submit" class="btn-secondary" style="font-size:13px;width:38%;display:inline-block;">🧪 Test Alert</button>
+    </form>
+  </div>
+
+  <div class="card">
     <h2>🔑 Login / Refresh Session</h2>
     <p style="color:#888; font-size:13px; margin-bottom:12px;">
       1. Click "Request Login Email" → Wolt sends magic link to your email<br>
@@ -566,6 +667,128 @@ app.get('/', (req, res) => {
 </div>
 <script>setTimeout(() => location.reload(), 30000);</script>
 </body></html>`);
+});
+
+// ── CONTACTS MANAGEMENT ENDPOINTS ──
+
+// Toggle contact active/inactive
+app.post('/contacts/toggle', (req, res) => {
+    const contacts = loadContacts();
+    const contact = contacts.find(c => c.id === req.body.id);
+    if (contact) {
+        contact.active = !contact.active;
+        saveContacts(contacts);
+        console.log(`[Contacts] ${contact.name} → ${contact.active ? 'ACTIVE' : 'DISABLED'}`);
+    }
+    res.redirect('/');
+});
+
+// Add new contact
+app.post('/contacts/add', (req, res) => {
+    if (req.body.password !== CONFIG.UI_PASSWORD) {
+        return res.send('<html><body style="background:#0f0f1a;color:#ff4444;padding:40px;">❌ Wrong password. <a href="/" style="color:#00aaff;">Back</a></body></html>');
+    }
+    const contacts = loadContacts();
+    const id = req.body.name.toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + Date.now().toString(36);
+    let chatId = req.body.chatId.trim();
+    const type = req.body.type || 'person';
+
+    // Auto-format based on type
+    if (chatId && !chatId.includes('@')) {
+        if (type === 'group') {
+            chatId = chatId + '@g.us';
+        } else {
+            chatId = chatId.replace(/[^0-9]/g, '') + '@c.us';
+        }
+    }
+
+    contacts.push({
+        id,
+        name: req.body.name.trim(),
+        chatId,
+        type, // 'person' or 'group'
+        active: true,
+    });
+    saveContacts(contacts);
+    console.log(`[Contacts] Added ${type}: ${req.body.name} (${chatId})`);
+    res.redirect('/');
+});
+
+// List WhatsApp groups (to find group IDs)
+app.post('/contacts/list-groups', async (req, res) => {
+    if (req.body.password !== CONFIG.UI_PASSWORD) {
+        return res.send('<html><body style="background:#0f0f1a;color:#ff4444;padding:40px;">❌ Wrong password. <a href="/" style="color:#00aaff;">Back</a></body></html>');
+    }
+    if (!CONFIG.GREEN_API_INSTANCE || !CONFIG.GREEN_API_TOKEN) {
+        return res.send('<html><body style="background:#0f0f1a;color:#ff4444;padding:40px;">❌ Green API not configured. <a href="/" style="color:#00aaff;">Back</a></body></html>');
+    }
+
+    const url = `https://api.green-api.com/waInstance${CONFIG.GREEN_API_INSTANCE}/getContacts/${CONFIG.GREEN_API_TOKEN}`;
+
+    try {
+        const data = await new Promise((resolve, reject) => {
+            https.get(url, (resp) => {
+                let body = '';
+                resp.on('data', chunk => body += chunk);
+                resp.on('end', () => resolve(body));
+            }).on('error', reject);
+        });
+
+        const contacts = JSON.parse(data);
+        const groups = contacts.filter(c => c.id && c.id.endsWith('@g.us'));
+
+        const groupRows = groups.map(g =>
+            `<tr>
+                <td style="padding:8px;border-bottom:1px solid #2a2a3e;">${g.name || '(unnamed)'}</td>
+                <td style="padding:8px;border-bottom:1px solid #2a2a3e;font-family:monospace;font-size:12px;color:#00ff88;">${g.id}</td>
+                <td style="padding:8px;border-bottom:1px solid #2a2a3e;">
+                    <form method="POST" action="/contacts/add" style="margin:0;display:inline;">
+                        <input type="hidden" name="password" value="${req.body.password}">
+                        <input type="hidden" name="name" value="${(g.name || 'Group').replace(/"/g, '&quot;')}">
+                        <input type="hidden" name="chatId" value="${g.id}">
+                        <input type="hidden" name="type" value="group">
+                        <button type="submit" style="background:#00ff88;color:#0f0f1a;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:12px;">+ Add</button>
+                    </form>
+                </td>
+            </tr>`
+        ).join('');
+
+        res.send(`<!DOCTYPE html><html><head><title>WhatsApp Groups</title>
+        <style>body{background:#0f0f1a;color:#e0e0e0;font-family:sans-serif;padding:20px;}
+        table{width:100%;border-collapse:collapse;margin-top:16px;}
+        th{text-align:left;padding:8px;border-bottom:2px solid #333;color:#00aaff;}
+        a{color:#00aaff;}</style></head><body>
+        <h2>📋 Your WhatsApp Groups (${groups.length})</h2>
+        <p style="color:#888;">Click "Add" to add any group as an alert recipient.</p>
+        <table><tr><th>Group Name</th><th>Group ID</th><th></th></tr>${groupRows}</table>
+        <br><a href="/">← Back to Dashboard</a></body></html>`);
+
+    } catch (err) {
+        console.error('[Groups] Error fetching:', err.message);
+        res.send(`<html><body style="background:#0f0f1a;color:#ff4444;padding:40px;">❌ Error: ${err.message}<br><a href="/" style="color:#00aaff;">Back</a></body></html>`);
+    }
+});
+
+// Remove contact
+app.post('/contacts/remove', (req, res) => {
+    if (req.body.password !== CONFIG.UI_PASSWORD) {
+        return res.send('<html><body style="background:#0f0f1a;color:#ff4444;padding:40px;">❌ Wrong password. <a href="/" style="color:#00aaff;">Back</a></body></html>');
+    }
+    let contacts = loadContacts();
+    const removed = contacts.find(c => c.id === req.body.id);
+    contacts = contacts.filter(c => c.id !== req.body.id);
+    saveContacts(contacts);
+    if (removed) console.log(`[Contacts] Removed: ${removed.name}`);
+    res.redirect('/');
+});
+
+// Send test message to all active contacts
+app.post('/contacts/test', (req, res) => {
+    if (req.body.password !== CONFIG.UI_PASSWORD) {
+        return res.send('<html><body style="background:#0f0f1a;color:#ff4444;padding:40px;">❌ Wrong password. <a href="/" style="color:#00aaff;">Back</a></body></html>');
+    }
+    sendWhatsAppAlert('🧪 Test alert from Wolt Monitor — if you see this, alerts are working!');
+    res.redirect('/');
 });
 
 // Request login email (navigates to Wolt login and enters email)

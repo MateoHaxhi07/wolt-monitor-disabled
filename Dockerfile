@@ -1,20 +1,17 @@
 FROM node:18-slim
 
-# Install Chrome dependencies
+# Install only Chromium + minimal deps (no extra fonts to save space)
 RUN apt-get update && apt-get install -y \
     chromium \
-    fonts-ipafont-gothic \
-    fonts-wqy-zenhei \
-    fonts-thai-tlwg \
-    fonts-kacst \
     fonts-freefont-ttf \
     libxss1 \
     --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Tell Puppeteer to use system Chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV NODE_OPTIONS="--max-old-space-size=256"
 
 # Create app directory
 WORKDIR /app
@@ -26,7 +23,7 @@ RUN mkdir -p /app/data
 COPY package.json ./
 
 # Install dependencies
-RUN npm install --production
+RUN npm install --production && npm cache clean --force
 
 # Copy app code
 COPY . .
